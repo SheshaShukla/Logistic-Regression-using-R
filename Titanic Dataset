@@ -1,0 +1,106 @@
+# STEP 1: Package Installation:
+install.packages("gmodels")
+install.packages("Hmisc")
+install.packages("pROC")
+install.packages("ResourceSelection")
+install.packages("car")
+install.packages("caret")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("lattice")
+install.packages("aod")
+install.packages("InformationValue")
+install.packages("ROCR")
+install.packages("Formula")
+library(gmodels)
+library(Hmisc)
+library(pROC)
+library(ResourceSelection)
+library(car)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(aod)
+library(InformationValue)
+library(ROCR)
+library(Formula)
+cat("\014") # Clearing the screen
+#STEP 1: Ends
+
+#STEP 2: Importing Datasets
+# Setting the working directory
+setwd("/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/Code_2017")
+getwd()
+
+# reading the dataset
+df.titanic <- read.csv('/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/data_2017/train.csv')
+str(df.titanic)
+View(df.titanic)
+
+#Removing unnecessary variables
+df.titanic.final <- df.titanic[,-c(1,4,9,10,11,12)]
+View(df.titanic.final)
+str(df.titanic.final)
+summary(df.titanic.final)
+
+#Dealing with missing values in age - Imputation using median
+df.titanic.final$age.missing.value <- is.na(df.titanic.final$Age)
+df.titanic.final$age.missing.value
+for(i in 1:nrow(df.titanic.final)){
+  if(df.titanic.final$age.missing.value[i]==TRUE){
+    df.titanic.final$Age[i] = 28
+  }
+}
+View(df.titanic.final)
+
+#Splitting into training and testing data
+set.seed(1234)
+df.titanic.final$rand <- runif(nrow(df.titanic.final))
+df.titanic.final$rand
+df.titanic.final.train <- df.titanic.final[df.titanic.final$rand <= 0.7,] 
+df.titanic.final.test <- df.titanic.final[df.titanic.final$rand > 0.7,]
+nrow(df.titanic.final.train)
+nrow(df.titanic.final.test)
+
+# how the categorical variables are distributed and are related with target outcome
+CrossTable(df.titanic.final$Survived)
+
+# checking for vif (Multicollinearity check)
+df.titanic.final.train$yact = ifelse(df.titanic.final.train$Survived == 1,1,0)
+titanic_fit <- lm(formula <- yact ~ Pclass + Sex + Age + SibSp + Parch, 
+          data=df.titanic.final.train)
+vif(titanic_fit)
+
+#Running the Model
+titanic.model <- glm(formula = yact ~ Pclass + Sex + Age + SibSp, 
+                  data=df.titanic.final.train, family = binomial)
+summary(titanic.model)
+
+# training probabilities and roc
+df.titanic.final.train$prob = predict(titanic.model, type=c("response"))
+#this will not work for the test data directly, use the test data as an argument
+class(df.titanic.final.train)
+nrow(df.titanic.final.train)
+q <- roc(Survived ~ prob, data = df.titanic.final.train)
+plot(q)
+auc(q)
+
+#Confusion Matrix
+df.titanic.final.train$ypred = ifelse(df.titanic.final.train$prob>=0.5,'pred_yes','pred_no')
+table(df.titanic.final.train$ypred,df.titanic.final.train$Survived)
+
+
+#Testing
+df.titanic.final.test$prob <- predict(titanic.model, newdata = df.titanic.final.test, type=c("response"))
+df.titanic.final.test$ypred = ifelse(df.titanic.final.test$prob>=0.5,'pred_yes','pred_no')
+table(df.titanic.final.test$ypred,df.titanic.final.test$Survived)
+View(df.titanic.final.test)
+
+### Testing for Jack n Rose's survival ###
+df.jackrose <- read.csv('Book1.csv')
+df.jackrose$prob = predict(titanic.model, newdata=df.jackrose, type=c("response"))
+df.jackrose$Survived.pred = ifelse(df.jackrose$prob>=.5,'pred_yes','pred_no')
+head(df.jackrose)
+# Jack dies, Rose survives
+### END - Testing on Jack n Rose ###
