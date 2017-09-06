@@ -1,0 +1,442 @@
+#Name: Shesha Hitesh Shukla | Roll No.: 20160123159 
+# Logistic Regression for Bank X-Sell Product
+######################################################
+# STEP 1: Package Installation:
+install.packages("gmodels")
+install.packages("Hmisc")
+install.packages("pROC")
+install.packages("ResourceSelection")
+install.packages("car")
+install.packages("caret")
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("lattice")
+install.packages("aod")
+install.packages("InformationValue")
+install.packages("ROCR")
+library(gmodels)
+library(Hmisc)
+library(pROC)
+library(ResourceSelection)
+library(car)
+library(caret)
+library(dplyr)
+library(ggplot2)
+library(lattice)
+library(aod)
+library(InformationValue)
+library(ROCR)
+cat("\014") # Clearing the screen
+#STEP 1: Ends
+
+#STEP 2: Importing Datasets and forming a merged Dataset to work on
+# Setting the working directory
+setwd("/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/Code_2017")
+getwd()
+
+# reading client datasets
+df.client <- read.csv('/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/data_2017/resession2/Bank_for_Class/bank_client.csv')
+str(df.client)
+
+# reading other attributes
+df.attr <- read.csv('/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/data_2017/resession2/Bank_for_Class/bank_other_attributes.csv')
+str(df.attr)
+
+# reading campaign data
+df.campaign <- read.csv('/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/data_2017/resession2/Bank_for_Class/latest_campaign.csv')
+str(df.campaign)
+
+# reading campaign outcome
+df.campOutcome <- read.csv('/Users/sheshashukla/Desktop/TRIMESTER 4/AMMA/data_2017/resession2/Bank_for_Class/campaign_outcome.csv')
+str(df.campOutcome)
+
+
+# Create campaign data by joining all tables together
+df.temp1 <- merge(df.client, df.campaign, by = 'Cust_id', all.x = TRUE)
+df.temp2 <- merge(df.temp1, df.attr, by = 'Cust_id', all.x = TRUE)
+df.data <- merge(df.temp2, df.campOutcome, by = 'Cust_id', all.x = TRUE)
+length(unique(df.data$Cust_id)) == nrow(df.data) #checking for any duplicate customer ID
+
+# clearing out temporary tables
+rm(df.temp1,df.temp2)
+
+# see few observations of merged dataset
+head(df.data)
+
+# see a quick summary view of the dataset
+summary(df.data)
+
+# see the tables structure
+str(df.data)
+
+# check the response rate
+CrossTable(df.data$y)
+#STEP 2: Ends
+
+#STEP 3: Splitting the data into training and test data
+set.seed(1234) # for reproducibility
+df.data$rand <- runif(nrow(df.data))
+df.train <- df.data[df.data$rand <= 0.7,]
+df.test <- df.data[df.data$rand > 0.7,]
+nrow(df.train)
+nrow(df.test)
+
+# how the categorical variables are distributed and are related with target outcome
+CrossTable(df.train$job, df.train$y)
+CrossTable(df.train$marital, df.train$y)
+CrossTable(df.train$education, df.train$y)
+CrossTable(df.train$default, df.train$y)
+CrossTable(df.train$housing, df.train$y)
+CrossTable(df.train$loan, df.train$y)
+CrossTable(df.train$poutcome, df.train$y)
+
+# let see how the numerical variables are distributed
+hist(df.train$age)
+hist(df.train$balance)
+hist(df.train$duration)
+hist(df.train$campaign)
+hist(df.train$pdays)
+hist(df.train$previous)
+describe(df.train[c("age", "balance", "duration", "campaign", "pdays", "previous")])
+
+#STEP 3: Ends
+#STEP 4: Running the full model with all independent variables
+df.train$yact = ifelse(df.train$y == 'yes',1,0) #model doesn't understand yes no, only 1 and 0
+full.model <- glm(formula = yact ~ age + balance + duration + campaign + pdays + previous +
+                    job + marital + education + default + housing + loan + poutcome, 
+                  data=df.train, family = binomial)
+summary(full.model)
+
+# checking for vif(Multicollinearity check)
+fit <- lm(formula <- yact ~ age + balance + duration + campaign + pdays + previous +
+            job + marital + education + default + housing + loan + poutcome, 
+          data=df.train)
+vif(fit)
+
+# automated variable selection - Backward
+backward <- step(full.model, direction = 'backward')
+summary(backward)
+
+# training probabilities and roc
+df.train$prob = predict(full.model, type=c("response"))
+class(df.train)
+nrow(df.train)
+q <- roc(y ~ prob, data = df.train)
+plot(q)
+auc(q)
+
+# variable importance
+varImp(full.model, scale = FALSE)
+
+#probabilities on test set
+df.test$prob = predict(full.model, newdata = df.test, type=c("response"))
+
+# confusion matrix
+df.train$ypred = ifelse(df.train$prob>=.5,'pred_yes','pred_no')
+table(df.train$ypred,df.train$y)
+#STEP 4: Ends
+
+#STEP 5: Making preparations to start removal of independent variables
+View(df.data)
+# Loading df.data into df.data_final
+df.data_final <- df.data
+df.data_final$yact = ifelse(df.data$y == 'yes',1,0) #Because machines understand only binary, not yes and no
+nrow(df.data_final)
+
+#Removing every row with NA entries
+df.data_final <- df.data_final[!apply(df.data_final[,c("age", "balance", "duration", "campaign", "pdays", "previous", "job","marital", "education", "default", "housing", "loan", "poutcome")], 1, anyNA),]
+nrow(df.data_final)
+View(df.data_final)
+
+set.seed(1234) # for reproducibility
+df.data_final$rand <- runif(nrow(df.data_final))
+
+#Training set = 90% of the entire data set #Test set = 10% of the entire data set
+#In this scenario, higher sensitivity is preferable as the Bank wishes to predict if the client 
+#will subscribe to a Term Deposit after having run the call based marketing campaign
+# Thus, from ROC Curve, we can conclude that 0.9 should be chosen as the threshold
+df.train_bankmodel <- df.data_final[df.data_final$rand <= 0.9,]
+df.test_bankmodel <- df.data_final[df.data_final$rand > 0.9,]
+nrow(df.train_bankmodel)
+
+#garbage collection to remove garbage from memory - to ensure memory overload doesn't happen
+gc()
+
+#Building a tentative model - with all the insignificant variables
+result_tentative_trainbankmodel <- glm(formula = yact ~ age + balance + duration + campaign + pdays + previous +
+                                      job + marital + education + default + housing + loan + poutcome, 
+                                    data=df.train_bankmodel, family = binomial)
+summary(result_tentative_trainbankmodel)
+
+
+# confusion matrix
+df.train_bankmodel$ypred = ifelse(df.train_bankmodel$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel$ypred,df.train_bankmodel$y)
+
+# training probabilities and roc
+df.train_bankmodel$prob = predict(result_tentative_trainbankmodel, type=c("response"))
+class(df.train_bankmodel)
+nrow(df.train_bankmodel)
+q <- roc(y ~ prob, data = df.train_bankmodel)
+plot(q)
+auc(q)
+
+
+#Multicollinearity
+result_tentative_fit <- lm(formula <- yact ~ age + balance + duration + campaign + pdays + previous +
+            job + marital + education + default + housing + loan + poutcome, 
+          data=df.train_bankmodel)
+vif(result_tentative_fit)
+#STEP 5: Ends
+
+#Starting removal of the independent variables:
+
+#STEP 6:Removing "jobunknown" and "pdays"-because it has GVIF^(1/(2*Df)) greater than 2 which we got from Multicollinearity Check
+df.train_bankmodel_onlysig <- df.train_bankmodel[df.train_bankmodel$job!="unknown",]
+df.train_bankmodel_onlysig$pdays <-NULL
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + default + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel[df.test_bankmodel$job!="unknown",]
+df.test_bankmodel_onlysig$pdays <-NULL
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 6: Ends
+
+#STEP 7:Removing "marital status single"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$marital!="single",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + default + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$marital!="single",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 7: Ends
+
+#STEP 8:Removing "default"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$marital!="yes",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$marital!="yes",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 8: Ends
+
+#STEP 9:Removing "job management"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$job!="management",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$job!="management",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 9: Ends
+
+#STEP 10:Removing "poutcome other"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$poutcome!="other",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$poutcome!="other",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 10: Ends
+
+#STEP 11:Removing "jobentrepreneur"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$job!="entrepreneur",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$job!="entrepreneur",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 11: Ends
+
+#STEP 12: Removing "education unknown"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$education!="unknown",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$education!="unknown",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 12: Ends
+
+#STEP 13: Removing "job student"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$job!="student",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$job!="student",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 13: Ends
+
+#STEP 14: Removing "job unemployed"
+df.train_bankmodel_onlysig <- df.train_bankmodel_onlysig[df.train_bankmodel_onlysig$job!="unemployed",]
+result_tentative_trainbankmodel_sig1 <- glm(formula = yact ~ age + balance + duration + campaign + previous +
+                                           job + marital + education + housing + loan + poutcome, 
+                                         data=df.train_bankmodel_onlysig, family = binomial)
+df.test_bankmodel_onlysig <- df.test_bankmodel_onlysig[df.test_bankmodel_onlysig$job!="unemployed",]
+summary(result_tentative_trainbankmodel_sig1)
+
+# confusion matrix
+df.train_bankmodel_onlysig$ypred = ifelse(df.train_bankmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.train_bankmodel_onlysig$ypred,df.train_bankmodel_onlysig$y)
+
+# training probabilities and roc
+df.train_bankmodel_onlysig$prob = predict(result_tentative_trainbankmodel_sig1, type=c("response"))
+class(df.train_bankmodel_onlysig)
+nrow(df.train_bankmodel_onlysig)
+q <- roc(y ~ prob, data = df.train_bankmodel_onlysig)
+plot(q)
+auc(q)
+#STEP 14: Ends
+
+#Step 15: Training the Model
+#Loading the final model into result_bankmodel_sig1
+result_bankmodel_sig1 <- result_tentative_trainbankmodel_sig1
+class(result_bankmodel_sig1)
+print(result_bankmodel_sig1)
+
+# Variable importance
+plot(result_bankmodel_sig1)
+varImp(result_bankmodel_sig1, scale = FALSE)
+
+#Checking for VIF
+fit_bankmodel <- lm(formula <- yact ~ age + balance + duration + campaign + previous +
+                   job + marital + education + housing + loan + poutcome, 
+                 data=df.train_bankmodel_onlysig)
+vif(fit_bankmodel)
+
+# automated variable selection - Backward
+backward_bankmodel <- step(result_bankmodel_sig1, direction = 'backward')
+summary(backward_bankmodel)
+
+# training probabilities and roc
+result_bankmodel_probs <- df.train_bankmodel_onlysig
+nrow(result_bankmodel_probs)
+class(result_bankmodel_probs)
+#Using the model made to make predictions in the column named 'prob'
+result_bankmodel_probs$prob = predict(result_bankmodel_sig1, type=c("response"))
+q_bankmodel <- roc(y ~ prob, data = result_bankmodel_probs)
+plot(q_bankmodel)
+auc(q_bankmodel)
+
+# how the categorical variables are distributed and are related with target outcome
+CrossTable(df.train_kmodel_onlysig$job, df.train_kmodel_onlysig$y)
+CrossTable(df.train_kmodel_onlysig$marital, df.train_kmodel_onlysig$y)
+CrossTable(df.train_kmodel_onlysig$education, df.train_kmodel_onlysig$y)
+CrossTable(df.train_kmodel_onlysig$default, df.train_kmodel_onlysig$y)
+CrossTable(df.train_kmodel_onlysig$housing, df.train_kmodel_onlysig$y)
+CrossTable(df.train_kmodel_onlysig$loan, df.train_kmodel_onlysig$y)
+CrossTable(df.train_kmodel_onlysig$poutcome, df.train_kmodel_onlysig$y)
+
+# numerical variable distribution
+hist(df.train_kmodel_onlysig$age)
+hist(df.train_kmodel_onlysig$balance)
+hist(df.train_kmodel_onlysig$duration)
+hist(df.train_kmodel_onlysig$campaign)
+hist(df.train_kmodel_onlysig$previous)
+
+# Confusion Matrix: Training Set
+result_bankmodel_probs$ypred = ifelse(result_bankmodel_probs$prob>=.5,'pred_yes','pred_no')
+table(result_bankmodel_probs$ypred,result_bankmodel_probs$y)
+
+#probabilities on test set
+df.test_kmodel_onlysig$prob = predict(result_kmodel_sig1, newdata = df.test_kmodel_onlysig, type=c("response"))
+
+#Confusion Matrix: Test Set
+df.test_kmodel_onlysig$ypred = ifelse(df.test_kmodel_onlysig$prob>=.5,'pred_yes','pred_no')
+table(df.test_kmodel_onlysig$ypred,df.test_kmodel_onlysig$y)
+
+######################################### THANK YOU ###########################################
